@@ -28,6 +28,7 @@ from typing import List
 # For functionality
 import tensorflow as tf
 import tensorflow.keras as keras
+import tensorflow.keras.callbacks as callbacks_module
 from scipy import sparse
 from scipy.integrate import solve_ivp
 import numpy as np
@@ -63,6 +64,9 @@ class PortHamiltonianOptimizer:
         self._param_count = None
         self._dynamics_matrix = None
 
+        # TODO: TEMPORARY
+        self.hamiltonian = None
+
     def _check_model_and_state(self, model: keras.models.Model):
         """Hook to be called on training, this checks whether the model being trained was changed"""
 
@@ -73,7 +77,7 @@ class PortHamiltonianOptimizer:
             param_count = _model_param_count(model)
 
             self._param_count = param_count
-            self._momenta = tf.zeros([param_count], dtype="float64")
+            self._momenta = tf.zeros([param_count], dtype='float64')
 
             B = self.resistive * sparse.eye(param_count)
             self._dynamics_matrix = PortHamiltonianOptimizer._calculate_dynamics_matrix(B)
@@ -87,7 +91,8 @@ class PortHamiltonianOptimizer:
             target_data,
             epochs: int = 1,
             batch_size: int = 64,
-            randomize_batches: bool = True,
+            shuffle: bool = True,
+            callbacks=None,
             metrics=[],
             hamiltonian_generator=None
         ) -> None:
@@ -99,35 +104,47 @@ class PortHamiltonianOptimizer:
 
         train_dataset = tf.data.Dataset.from_tensor_slices((input_data, target_data))
         train_dataset = train_dataset.shuffle(
-            buffer_size=1024, reshuffle_each_iteration=randomize_batches
+            buffer_size=1024, reshuffle_each_iteration=shuffle
         ).batch(batch_size)
 
-        for epoch in range(1, epochs + 1):
-            print(f'Epoch {epoch}/{epochs}')
-            pbar = keras.utils.Progbar(sample_cnt, stateful_metrics=['loss'])
+        # Container that configures and calls `tf.keras.Callback`s.
+        if not isinstance(callbacks, callbacks_module.CallbackList):
+            callbacks = callbacks_module.CallbackList(
+                callbacks,
+                add_history=True, add_progbar=True, model=model,
+                verbose=True, epochs=epochs, steps=sample_cnt)
+
+        # Begin training
+        callbacks.on_train_begin()
+
+        for epoch in tf.range(epochs):
+            callbacks.on_epoch_begin(epoch)
 
             for m in metrics:
                 m.reset_states()
 
-            in_epoch = 0
-            for batch in train_dataset:
+            for index, batch in train_dataset.enumerate():
+                callbacks.on_train_batch_begin(index * batch_size, {'batch': index, 'size': batch_size})
                 loss, energy = self.train_batch(model, *batch, metrics, hamiltonian_generator)
 
-                # Update the progress bar wit the current number of processed samples and the latest metrics
-                in_epoch += batch[0].shape[0]
-                pbar.update(
-                    in_epoch, [('loss', loss), ('energy', energy)] + [(m.name, m.result()) for m in metrics]
-                )
+                # Call callbacks (also updates progress bar)
+                callbacks.on_train_batch_end(tf.cast(index * batch_size, tf.float64), dict([('loss', loss), ('energy', energy)] + [(m.name, m.result()) for m in metrics]))
+
+            callbacks.on_epoch_end(tf.cast(epoch, tf.int64), dict([('loss', loss), ('energy', energy)] + [(m.name, m.result()) for m in metrics]))
+
+        callbacks.on_train_end()
 
     def train_batch(
             self, model: keras.models.Model, input_batch, target_batch,
             metrics=[], hamiltonian_generator=None
         ) -> float:
-        """TODO: DOCUMENTATION"""
+        """Train the model with a single batch of samples
+        """
 
         # Basic sanity check that input sample count matches target sample
         # count
-        assert input_batch.shape[0] == target_batch.shape[0]
+        sample_cnt = input_batch.shape[0]
+        assert sample_cnt == target_batch.shape[0]
 
         self._check_model_and_state(model)
         p = self._param_count
@@ -151,10 +168,12 @@ class PortHamiltonianOptimizer:
         _model_set_flat_variables(model, params)
         self._momenta = momenta
 
+        # Predict output for the current batch and update the metrics accordingly
         prediction = model(input_batch)
         for metric in metrics:
             metric.update_state(target_batch, prediction)
 
+        # We return the loss for the current batch and the energy in the system for the current batch
         return model.loss(target_batch, prediction), hamiltonian(params, momenta)
 
     def get_dynamics(
@@ -168,7 +187,9 @@ class PortHamiltonianOptimizer:
         p = self._param_count
         F = self._dynamics_matrix
 
-        hamiltonian = (hamiltonian_generator or self.get_hamiltonian)(model, inputs, targets)
+        if not self.hamiltonian:
+            self.hamiltonian = (hamiltonian_generator or self.get_hamiltonian)(model, inputs, targets)
+        hamiltonian = self.hamiltonian
 
         # As long as no custom hamiltonian function is given, the first
         # dynamics function is used, which has some features of the
@@ -219,6 +240,8 @@ class PortHamiltonianOptimizer:
 
                 params = state[:p]
                 momenta = state[p:]
+
+                _model_set_flat_variables(model, params)
 
                 # Determine the gradient of the hamiltonian
                 with tf.GradientTape(persistent=True) as tape:
