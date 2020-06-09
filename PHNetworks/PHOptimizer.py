@@ -14,7 +14,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""A TensorFlow Optimizer for neural networks based on the paper
+"""
+    A TensorFlow Optimizer for neural networks based on the paper
     'Port-Hamiltonian Approach to Neural Network Training'
     by Massaroli, Poli, et. al.
     arXiv:1909.02702v1 [cs.NE] – https://arxiv.org/abs/1909.02702v1
@@ -42,10 +43,34 @@ class PortHamiltonianOptimizer:
             gamma: float = 1.0,
             resistive: float = 0.5,
             ivp_period: float = 1.0,
-            ivp_steps: int = None,
-            ivp_solver: str = 'RK45',
+            ivp_max_step: float = np.inf,
+            ivp_method: str = 'BDF',
         ):
-        """TODO: DOCUMENTATION"""
+        """
+        Initialize a new Optimizer object
+        
+        This creates a new instance of the optimizer and sets the optimizer's
+        hyperparameters.
+        
+        Parameters
+        ----------
+        alpha : float
+            Parameter α in the Hamiltonian
+        beta : float
+            Parameter β in the Hamiltonian
+        gamma : float
+            Parameter γ in the Hamiltonian
+        resistive : float
+            Factor of the resistive matrix B = resistive * eye(p)
+        ivp_period : float
+            Period for which the PH system will be integrated [0, ivp_period]
+        ivp_max_step : float
+            Maximum step size the IVP solver is allowed to take.
+            If this is not specified, the solver automatically chooses the step size.
+        ivp_method : str
+            Parameter to scipy's IVP solver, specifying the method to be used.
+            Can be 'RK45', 'RK23', 'DOP853', 'Radau', 'BDF' (default), 'LSODA'
+        """
 
         # Optimizer hyperpameters
         self.alpha = alpha
@@ -54,9 +79,10 @@ class PortHamiltonianOptimizer:
         self.resistive = resistive
 
         # Configuration of the IVP solver
-        self.ivp_period = ivp_period
-        self.ivp_solver = ivp_solver
-        self.ivp_t_span = np.linspace(0.0, self.ivp_period, ivp_steps) if ivp_steps else (0.0, self.ivp_period)
+        self.ivp_period   = ivp_period
+        self.ivp_method   = ivp_method
+        self.ivp_max_step = ivp_max_step
+        self.ivp_t_span   = (0.0, self.ivp_period)
 
         # Initialize internal parameters
         self._last_model = None
@@ -92,11 +118,37 @@ class PortHamiltonianOptimizer:
             epochs: int = 1,
             batch_size: int = 64,
             shuffle: bool = True,
-            callbacks=None,
-            metrics=[],
-            hamiltonian_generator=None
+            callbacks = None,
+            metrics = [],
+            hamiltonian_generator = None
         ) -> None:
-        """TODO: DOCUMENTATION"""
+        """
+        Train the model on the given data
+        
+        Parameters
+        ----------
+        model : keras.models.Model
+            The tf.keras Model to train
+        input_data : 
+        
+        target_data :
+        
+        epochs : int
+            The number of epochs (iterations over the complete training dataset) to use for
+            the training of the model given.
+        batch_size : int
+            Number of items in a batch, 64 by default.
+            Use 1 for the '' method of training and the size of the training dataset for the '' method
+            described in the paper.
+        shuffle : bool
+        
+        callbacks : List of tf.keras.callbacks.Callback objects
+            Callbacks to be called during the training process 
+        metrics : 
+        
+        hamiltonian_generator : 
+            
+        """
 
         # Determine the number of samples within the training dataset
         sample_cnt = input_data.shape[0]
@@ -112,26 +164,30 @@ class PortHamiltonianOptimizer:
             callbacks = callbacks_module.CallbackList(
                 callbacks,
                 add_history=True, add_progbar=True, model=model,
-                verbose=True, epochs=epochs, steps=sample_cnt)
-
+                verbose=True, epochs=epochs,
+                # And, since the tensorflow progbar is a bit broken … with conversion
+                steps=tf.constant(int(sample_cnt / batch_size), dtype='float64')
+            )
+        
         # Begin training
         callbacks.on_train_begin()
 
-        for epoch in tf.range(epochs):
+        for epoch in tf.range(epochs, dtype='int64'):
             callbacks.on_epoch_begin(epoch)
 
             for m in metrics:
                 m.reset_states()
 
             for index, batch in train_dataset.enumerate():
-                callbacks.on_train_batch_begin(index * batch_size, {'batch': index, 'size': batch_size})
+                callbacks.on_train_batch_begin(index, {'batch': index, 'size': batch_size})
                 loss, energy = self.train_batch(model, *batch, metrics, hamiltonian_generator)
 
                 # Call callbacks (also updates progress bar)
-                callbacks.on_train_batch_end(tf.cast(index * batch_size, tf.float64), dict([('loss', loss), ('energy', energy)] + [(m.name, m.result()) for m in metrics]))
-
-            callbacks.on_epoch_end(tf.cast(epoch, tf.int64), dict([('loss', loss), ('energy', energy)] + [(m.name, m.result()) for m in metrics]))
-
+                logs = dict([('loss', loss), ('energy', energy)] + [(m.name, m.result()) for m in metrics])
+                callbacks.on_train_batch_end(tf.cast(index, dtype='float64'), logs) # Another cast to work around tf quirks
+            
+            callbacks.on_epoch_end(epoch, logs)
+        
         callbacks.on_train_end()
 
     def train_batch(
@@ -139,6 +195,7 @@ class PortHamiltonianOptimizer:
             metrics=[], hamiltonian_generator=None
         ) -> float:
         """Train the model with a single batch of samples
+        
         """
 
         # Basic sanity check that input sample count matches target sample
@@ -147,7 +204,7 @@ class PortHamiltonianOptimizer:
         assert sample_cnt == target_batch.shape[0]
 
         self._check_model_and_state(model)
-        p = self._param_count
+        p = self._param_count        
 
         params = _flatten_variables(model.trainable_variables)
         state = tf.concat([params, self._momenta], 0)
@@ -155,7 +212,7 @@ class PortHamiltonianOptimizer:
         dynamics, hamiltonian = self.get_dynamics(model, input_batch, target_batch, hamiltonian_generator)
 
         # Solve the IVP problem using SciPy's IVP solver.
-        solution = solve_ivp(dynamics, self.ivp_t_span, state, method=self.ivp_solver)
+        solution = solve_ivp(dynamics, self.ivp_t_span, state, method=self.ivp_method)
         # TODO: Check solution
 
         # The new state resulting from the evolution of the IVP
@@ -179,8 +236,22 @@ class PortHamiltonianOptimizer:
     def get_dynamics(
             self, model: keras.models.Model, inputs, targets, hamiltonian_generator=None
         ):
-        """This function returns a tf.function that defines the dynamics of a PH system.
-        These are defined as ẋ=(J-R)·∇H(x)=F·∇H(x), where F the dynamics matrix calculated when a new model is loaded."""
+        """
+        This function returns a tf.function that defines the dynamics of a PH system.
+        
+        These are defined as ẋ=(J-R)·∇H(x)=F·∇H(x), where F the dynamics matrix calculated when a new model is loaded.
+        
+        Parameters
+        ----------
+        model : keras.models.Model
+            The model to train, required for its gradient function wrt. to the parameters
+        inputs : 
+        
+        targets :
+        
+        hamiltonian_generator : 
+            
+        """
 
         self._check_model_and_state(model)
 
@@ -266,8 +337,8 @@ class PortHamiltonianOptimizer:
     def get_hamiltonian(
             self, model: keras.models.Model, inputs: tf.Tensor, targets: tf.Tensor
         ):
-        """Generate a Tensorflow instrumented function that represents the systems Hamiltonian.
-
+        """
+            Generate a Tensorflow instrumented function that represents the systems Hamiltonian.
         """
         p = _model_param_count(model)
 
@@ -297,7 +368,10 @@ class PortHamiltonianOptimizer:
 
     @staticmethod
     def _calculate_dynamics_matrix(B: np.ndarray) -> np.ndarray:
-        """This function calculates the matrix called F = J - R in the
+        """
+        Calculate the dynamics matrix F of the PH systemss
+        
+        This function calculates the matrix called F = J - R in the
         paper, where J = [[0, 1],[-1, 0]] and R = [[0, 0],[0, B]]
         (0 and 1 are the zero and identity matrix respectively).
         It is calculated and stored as a sparse tensor in order to save
