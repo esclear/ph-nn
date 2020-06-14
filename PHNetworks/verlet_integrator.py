@@ -18,15 +18,17 @@ import tensorflow as tf
 
 class VerletIntegrator:
     """
-        A verlet integrator written for Port-Hamiltonian systems used to train neural networks
+        A verlet integrator written for Port-Hamiltonian systems used to train
+        neural networks
 
-        [N.B. the comments below are best read with a text editor that supports proper unicode symbols,
-         including diacritics, such as codium or vs code]
+        [N.B. the comments below are best read with a text editor that supports
+         proper unicode symbols, including diacritics, such as codium or vs code]
 
         We assume that the Hamiltonian is of the form
             H(x) = L(ϑ) + ½·ωᵀ·M⁻¹·ω.
         Where M = Mᵀ ≻ 0, x = (ϑ,ω) with ω = M·ϑ̇.
-        L is the loss function of the neuronal network, with respect to the networks' parameters ϑ.
+        L is the loss function of the neuronal network, with respect to the
+        networks' parameters ϑ.
 
         This implies that
             ∇ϑ H(x) = ∇ϑ L(ϑ),
@@ -51,18 +53,21 @@ class VerletIntegrator:
 
         However, in {B} ϑ̈(t + Δt) depends on ϑ̇(t + Δt).
         But we can rectify this by solving for ϑ̈(t + Δt):
-            ϑ̇(t + Δt) = ϑ̇(t) + ½·Δt·[ϑ̈(t) + ϑ̈(t + Δt)] = ϑ̇(t) + ½·Δt·[ϑ̈(t) + M⁻¹·[- ∇ϑ L(ϑ(t + Δt)) - B·ϑ̇(t + Δt)]]
+            ϑ̇(t + Δt) = ϑ̇(t) + ½·Δt·[ϑ̈(t) + ϑ̈(t + Δt)]
+                      = ϑ̇(t) + ½·Δt·[ϑ̈(t) + M⁻¹·[- ∇ϑ L(ϑ(t + Δt)) - B·ϑ̇(t + Δt)]]
                       = ϑ̇(t) + ½·Δt·[ϑ̈(t) - M⁻¹·∇ϑ L(ϑ(t + Δt)) - M⁻¹·B·ϑ̇(t + Δt)]
           ⇔ [ϑ̇(t + Δt) + ½·Δt·M⁻¹·B·ϑ̇(t + Δt)] = ϑ̇(t) + ½·Δt·[ϑ̈(t) - M⁻¹·∇ϑ L(ϑ(t + Δt))]
           ⇔ [𝕀 + ½·Δt·M⁻¹·B]·ϑ̇(t + Δt) = ϑ̇(t) + ½·Δt·[ϑ̈(t) - M⁻¹·∇ϑ L(ϑ(t + Δt))]
-          ⇔ ϑ̇(t + Δt) = [𝕀 + ½·Δt·M⁻¹·B]⁻¹·[ϑ̇(t) + ½·Δt·[ϑ̈(t) - M⁻¹·∇ϑ L(ϑ(t + Δt))]]     (B)
+          ⇔ ϑ̇(t + Δt) = [𝕀 + ½·Δt·M⁻¹·B]⁻¹·[ϑ̇(t) + ½·Δt·[ϑ̈(t) - M⁻¹·∇ϑ L(ϑ(t + Δt))]]  (B)
 
-        Since both M and B are symmetric and positive definite, [𝕀 + ½·Δt·M⁻¹·B]⁻¹ exists.
-        We let the user use arbitrary such matrices M and B, however in most cases these will be diagonal matrices,
-        such that it is trivial to determine M⁻¹, B⁻¹ and even [𝕀 + ½·Δt·M⁻¹·B]⁻¹.
+        Since both M and B are symmetric and positive definite, [𝕀 + ½·Δt·M⁻¹·B]⁻¹
+        exists. The user may choose arbitrary such matrices M and B, however in most
+        cases these will be diagonal matrices, such that it is trivial to determine
+        M⁻¹, B⁻¹ and even [𝕀 + ½·Δt·M⁻¹·B]⁻¹.
 
-        This rather minimal implementation defers the calculation of the inverse matrices to the user, since they
-        will have the best insights into the properties of M and B which may facilitate the computation of the inverse.
+        This rather minimal implementation defers the calculation of the inverse
+        matrices to the user, since they will have the best insights into the
+        properties of M and B which may facilitate the computation of the inverse.
     """
     def __init__(self, loss_gradient, M, M_inv, B, B_inv, ITMB_inv):
         """
@@ -105,19 +110,25 @@ class VerletIntegrator:
         # The dimension of the system, i.e. of the position / velocity
         self.dimension = M.shape[0]
         # Basic assertions to catch (some) errors
-        assert self.M.shape == [self.dimension, self.dimension], "M has invalid dimensions"
-        assert self.B.shape == [self.dimension, self.dimension], "The dimension of B does not match M"
-        assert self.M_inv.shape == [self.dimension, self.dimension], "Dimensions imply that M_inv can't be the inverse of M"
-        assert self.B_inv.shape == [self.dimension, self.dimension], "Dimensions imply that B_inv can't be the inverse of B"
+        assert self.M.shape     == [self.dimension, self.dimension], \
+            "M has invalid dimensions (non-square)"
+        assert self.B.shape     == [self.dimension, self.dimension], \
+            "The dimension of B does not match M"
+        assert self.M_inv.shape == [self.dimension, self.dimension], \
+            "Dimensions imply that M_inv can't be the inverse of M"
+        assert self.B_inv.shape == [self.dimension, self.dimension], \
+            "Dimensions imply that B_inv can't be the inverse of B"
 
-        # Prepare position and velocity vector, where position corresponds to the network parameters and velocity to the impulse
+        # Prepare position and velocity vector, where position corresponds to the
+        # network parameters and velocity to the impulse
         self.position         = tf.Variable(tf.zeros((self.dimension, 1), dtype='float64'))
         self.velocity         = tf.Variable(tf.zeros((self.dimension, 1), dtype='float64'))
         self.acceleration     = tf.Variable(tf.zeros((self.dimension, 1), dtype='float64'))
 
-        # This technically does not /have/ to be a member of this class, however doing so we can avoid having compute the gradient
-        # twice and to allocate memory and instantiate it in _velocity_verlet_step(), which is the function that will be called
-        # most often.
+        # This technically does not /have/ to be a member of this class, however doing
+        # so we can avoid having compute the gradient twice and to allocate memory
+        # and instantiate it in _velocity_verlet_step(), which is the function that
+        # will be called most often.
         self.gradient         = tf.Variable(tf.zeros((self.dimension, 1), dtype='float64'))
 
         # Store the step size
@@ -143,12 +154,15 @@ class VerletIntegrator:
             A step of the verlocity verlet method.
             We use the fomulas presented and derived above:
 
-            ϑ(t + Δt) = ϑ(t) + Δt·ϑ̇(t) + ½·(Δt)²·ϑ̈(t)                                   (A)
-            ϑ̇(t + Δt) = [𝕀 + ½·Δt·M⁻¹·B]⁻¹·[ϑ̇(t) + ½·Δt·[ϑ̈(t) - M⁻¹·∇ϑ L(ϑ(t + Δt))]]    (B)
+            ϑ(t + Δt) = ϑ(t) + Δt·ϑ̇(t) + ½·(Δt)²·ϑ̈(t)                                 (A)
+            ϑ̇(t + Δt) = [𝕀 + ½·Δt·M⁻¹·B]⁻¹·[ϑ̇(t) + ½·Δt·[ϑ̈(t) - M⁻¹·∇ϑ L(ϑ(t + Δt))]]  (B)
             ϑ̈(t + Δt) = M⁻¹·[- ∇ϑ L(ϑ(t + Δt)) - B·ϑ̇(t + Δt)]
         """
         # Determine the new position via (A)
-        self.position.assign(self.position + self.Δt * self.velocity + 0.5 * tf.square(self.Δt) * self.acceleration)
+        self.position.assign(
+            self.position + self.Δt * self.velocity
+                          + 0.5 * tf.square(self.Δt) * self.acceleration
+        )
 
         # Determine the new velocity
         self.gradient.assign(self.loss_gradient(self.position))
@@ -165,10 +179,13 @@ class VerletIntegrator:
             )
         )
 
-        # Calculate the acceleration we would normally have used to calculate the velocity in (S),
-        # since we use it as ϑ̈(t) in (B) in the next iteration
+        # Calculate the acceleration we would normally have used to calculate the
+        # velocity in (S), since we use it as ϑ̈(t) in (B) in the next iteration
         self.acceleration.assign(
-            tf.sparse.sparse_dense_matmul(self.M_inv, (- self.gradient - tf.sparse.sparse_dense_matmul(self.B, self.velocity)))
+            tf.sparse.sparse_dense_matmul(
+                self.M_inv,
+                (- self.gradient - tf.sparse.sparse_dense_matmul(self.B, self.velocity))
+            )
         )
 
 
@@ -176,8 +193,9 @@ class VerletIntegrator:
         """
             Integrate the system over the interval [0, t], taking steps of size Δt.
 
-            For simplicity, the implementation is such that if t is not a multiple of Δt, this implementation will
-            actually integrate over the interval [0, k * Δt], such that k is minimal with k * Δt ≥ t.
+            For simplicity, the implementation is such that if t is not a multiple
+            of Δt, this implementation will actually integrate over the interval
+            [0, k * Δt], such that k is minimal with k * Δt ≥ t.
 
             Parameters
             ----------

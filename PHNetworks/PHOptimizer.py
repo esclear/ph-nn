@@ -64,8 +64,8 @@ class PortHamiltonianOptimizer:
         beta : float
             Parameter β in the Hamiltonian
         gamma : float
-            Parameter γ in the Hamiltonian, represents the mass of every parameter and
-            defines the matrix M as M = γ·𝕀
+            Parameter γ in the Hamiltonian, represents the mass of every parameter
+            and defines the matrix M as M = γ·𝕀
         resistive : float
             Defines the resistive matrix B as B = resistive·𝕀
         ivp_period : float
@@ -90,9 +90,11 @@ class PortHamiltonianOptimizer:
 
     def _check_model_and_state(self, model: keras.models.Model):
         """
-            Internal hook to be called on training, this checks whether the model being trained was changed
+            Internal hook to be called on training, this checks whether the model
+            being trained was changed
 
-            This (re)creates the matrices B, B⁻¹, M, M⁻¹ and also a function returning the inverse of [𝕀 + ½·Δt·M⁻¹·B]⁻¹
+            This (re)creates the matrices B, B⁻¹, M, M⁻¹ and also a function
+            returning the inverse of [𝕀 + ½·Δt·M⁻¹·B]⁻¹
             (See verlet_integrator for details)
         """
 
@@ -112,13 +114,17 @@ class PortHamiltonianOptimizer:
 
             # This function calculates [𝕀 + ½·Δt·M⁻¹·B]⁻¹
             self.ITMB_inv = lambda Δt: \
-                tf.constant(1 / (1 + Δt * self.resistive / (2 * self.gamma))) * tf.sparse.eye(param_count, dtype='float64')
+                tf.constant(1 / (1 + Δt * self.resistive / (2 * self.gamma))) \
+                    * tf.sparse.eye(param_count, dtype='float64')
 
-            # The gradient depends on the current batch, which we don't know at this time.
-            # It is set correctly in the train_batch() function.
+            # The gradient depends on the current batch, which we don't know at
+            # this time. It is set correctly in the train_batch() function.
             stub_loss_gradient = lambda _: tf.zeros((param_count, 1), dtype='float64')
 
-            self._integrator = VerletIntegrator(stub_loss_gradient, self.M, self.M_inv, self.B, self.B_inv, self.ITMB_inv)
+            self._integrator = VerletIntegrator(
+                stub_loss_gradient,
+                self.M, self.M_inv, self.B, self.B_inv, self.ITMB_inv
+            )
 
     # Training related functionality
     def train(
@@ -144,17 +150,18 @@ class PortHamiltonianOptimizer:
         target_data : tf.Tensor
             Tensor of expected outputs corresponding to the inputs given in input_data
         epochs : int
-            The number of epochs (iterations over the complete training dataset) to use for
-            the training of the model given.
+            The number of epochs (iterations over the complete training dataset)
+            to use for the training of the model given.
         batch_size : int
             Number of items in a batch, 64 by default.
-            Use 1 for the '' method of training and the size of the training dataset for the '' method
-            described in the paper.
+            Use 1 for the '' method of training and the size of the training dataset
+            for the '' method described in the paper.
         shuffle : bool
             Whether samples shall be shuffled before batching in different epochs.
-            This is supposed to increase accuracy when training over multiple epochs, since the batches
-            used for training are (probably) different in every epoch, which prevents a reduction of the
-            training's effectiveness (compare 'Deep Learning' p. 280)
+            This is supposed to increase accuracy when training over multiple epochs,
+            since the batches used for training are (probably) different in every
+            epoch, which prevents a reduction of the training's effectiveness
+            (compare 'Deep Learning' p. 280)
         callbacks : List of tf.keras.callbacks.Callback objects
             Callbacks to be called during the training process
         metrics : List[tf.metrics.Metric]
@@ -177,7 +184,7 @@ class PortHamiltonianOptimizer:
                 callbacks,
                 add_history=True, add_progbar=True, model=model,
                 verbose=True, epochs=epochs,
-                # And, since the tensorflow progbar is a bit broken … with conversion
+                # And, since the tensorflow progbar is a bit broken … with cast
                 steps=tf.constant(int(sample_cnt / batch_size), dtype='float64')
             )
 
@@ -191,12 +198,18 @@ class PortHamiltonianOptimizer:
                 m.reset_states()
 
             for index, batch in train_dataset.enumerate():
-                callbacks.on_train_batch_begin(index, {'batch': index, 'size': batch_size})
+                callbacks.on_train_batch_begin(
+                    index, {'batch': index, 'size': batch_size}
+                )
                 loss, energy = self.train_batch(model, *batch, metrics)
 
                 # Call callbacks (also updates progress bar)
-                logs = dict([('loss', loss), ('energy', energy)] + [(m.name, m.result()) for m in metrics])
-                callbacks.on_train_batch_end(tf.cast(index, dtype='float64'), logs) # Another cast to work around tf quirks
+                logs = dict(
+                    [('loss', loss), ('energy', energy)] +
+                    [(m.name, m.result()) for m in metrics]
+                )
+                # Another cast to work around tf quirks:
+                callbacks.on_train_batch_end(tf.cast(index, dtype='float64'), logs)
 
             callbacks.on_epoch_end(epoch, logs)
 
@@ -230,7 +243,8 @@ class PortHamiltonianOptimizer:
         sample_cnt = input_batch.shape[0]
         assert sample_cnt == target_batch.shape[0]
 
-        # Call the model handler (no-op if the model didn't change since the last iteration)
+        # Call the model handler
+        # (no-op if the model didn't change since the last iteration)
         self._check_model_and_state(model)
 
         # Redefine hamiltonian and gradient for the current batch
@@ -243,7 +257,8 @@ class PortHamiltonianOptimizer:
             with tf.GradientTape() as tape:
                 tape.watch(input_batch)
 
-                loss = model.loss(target_batch, model(input_batch)) + self.beta  * tf.tensordot(params, params, 2)
+                loss = model.loss(target_batch, model(input_batch)) \
+                     + self.beta  * tf.tensordot(params, params, 2)
 
             return _flatten_variables(
                 tape.gradient(loss, model.trainable_variables)
@@ -252,7 +267,9 @@ class PortHamiltonianOptimizer:
 
         params = _flatten_variables(model.trainable_variables)
 
-        params, velocity = self._integrator.integrate(self.ivp_period, self.ivp_step_size, params)
+        params, velocity = self._integrator.integrate(
+            self.ivp_period, self.ivp_step_size, params
+        )
         momenta = tf.sparse.sparse_dense_matmul(self.M, velocity)
 
         _model_set_flat_variables(model, params)
@@ -262,18 +279,21 @@ class PortHamiltonianOptimizer:
         for metric in metrics:
             metric.update_state(target_batch, prediction)
 
-        # We return the loss for the current batch and the energy in the system for the current batch
+        # We return the loss for the current batch and the energy in the system
+        # for the current batch
         return model.loss(target_batch, prediction), batch_hamiltonian(params, momenta)
 
     def get_hamiltonian(
             self, model: keras.models.Model, inputs: tf.Tensor, targets: tf.Tensor
         ) -> Callable[[tf.Tensor], float]:
         """
-            Generate a Tensorflow instrumented function that represents the systems Hamiltonian.
+            Generate a Tensorflow instrumented function that represents the
+            system's Hamiltonian function.
         """
         p = _model_param_count(model)
 
-        return lambda params, momenta: self._hamiltonian(model, inputs, targets, params, momenta)
+        return lambda params, momenta: \
+            self._hamiltonian(model, inputs, targets, params, momenta)
 
     @tf.function
     def _hamiltonian(
@@ -281,12 +301,15 @@ class PortHamiltonianOptimizer:
             inputs: tf.Tensor, targets: tf.Tensor,
             params: tf.Tensor, momenta: tf.Tensor
         ) -> float:
-        """Calculate the value of the Hamiltonian of the system.
+        """
+            Calculate the value of the Hamiltonian of the system.
 
-        The parameter state should be a tf.Tensor (x in the thesis, ξ in the original paper).
+            The parameter state should be a tf.Tensor
+            (x in the thesis, ξ in the original paper).
 
-        It takes two arguments, params and momenta, instead of the single state argument,
-        since it is possible to faster calculate the partial derivative with regard to the momenta.
+            It takes two arguments, params and momenta, instead of the single state
+            argument, since it is possible to faster calculate the partial derivative
+            with regard to the momenta.
         """
 
         # Assign state parameters to model
@@ -306,8 +329,12 @@ class PortHamiltonianOptimizer:
 ####################################
 @tf.function
 def _flatten_variables(variables: List[tf.Variable]) -> tf.Tensor:
-    """Given a list of TensorFlow variable tensors, create a one-dimensional tensor from the variables."""
-    # This is done by concatenating the variables after reshaping them into a single dimension
+    """
+        Given a list of TensorFlow variable tensors, create a one-dimensional
+        tensor from the variables.
+    """
+    # This is done by concatenating the variables after reshaping them into a single
+    # dimension
     return tf.concat([tf.reshape(var, [-1, 1]) for var in variables], 0)
 
 

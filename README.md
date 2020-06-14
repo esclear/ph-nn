@@ -15,6 +15,10 @@ It is also not possible to use the hamiltonian as loss function, since the gradi
 This algorithm uses a custom written and optimized velocity verlet implementation completely written as tensorflow code.
 Its implementation and derivation is described in [`PHNetworks/verlet_integrator.py`](PHNetworks/verlet_integrator.py).
 
+# Dependencies
+This optimizer has been developed using TensorFlow 2 nightly and some of the examples use TensorBoard 2 nightly using Python 3.8.  
+The latest version under which the optimizer was tested and working can be found in the [requirements.txt](requirements.txt) file and may be installed using `pip -r requirements.txt`.
+
 ## Example
 The following example shows how a model can be trained for the ubiquitous MNIST dataset using this optimizer:
 ```python
