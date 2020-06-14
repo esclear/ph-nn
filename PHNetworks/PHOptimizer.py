@@ -20,20 +20,26 @@
     by Massaroli, Poli, et. al.
     arXiv:1909.02702v1 [cs.NE] – https://arxiv.org/abs/1909.02702v1
 
-    This can't be used in-place instead of the optimizers provided in
+    This can't quite be used in-place instead of the optimizers provided in
     TensorFlow, since the interfaces are not compatible.
+    However, an effort was made to keep the user interface almost the same.
+    Instead of compiling a model with this optimizer and calling model.fit(),
+    compile the model (without any optimizer) and pass it to the train() method
+    of an instance of this optimizer.
+
+    This is the second iteration, using the velocity verlet method for integration.
 """
 # For type anotations
-from typing import List
+from typing import Callable, List
 
 # For functionality
 import tensorflow as tf
 import tensorflow.keras as keras
 import tensorflow.keras.callbacks as callbacks_module
-from scipy import sparse
-from scipy.integrate import solve_ivp
 import numpy as np
 
+# custom Verlet integrator
+from .verlet_integrator import VerletIntegrator
 
 class PortHamiltonianOptimizer:
     def __init__(
@@ -43,15 +49,14 @@ class PortHamiltonianOptimizer:
             gamma: float = 1.0,
             resistive: float = 0.5,
             ivp_period: float = 1.0,
-            ivp_max_step: float = np.inf,
-            ivp_method: str = 'BDF',
+            ivp_step_size: float = 0.02,
         ):
         """
         Initialize a new Optimizer object
-        
+
         This creates a new instance of the optimizer and sets the optimizer's
         hyperparameters.
-        
+
         Parameters
         ----------
         alpha : float
@@ -59,42 +64,37 @@ class PortHamiltonianOptimizer:
         beta : float
             Parameter β in the Hamiltonian
         gamma : float
-            Parameter γ in the Hamiltonian
+            Parameter γ in the Hamiltonian, represents the mass of every parameter and
+            defines the matrix M as M = γ·𝕀
         resistive : float
-            Factor of the resistive matrix B = resistive * eye(p)
+            Defines the resistive matrix B as B = resistive·𝕀
         ivp_period : float
             Period for which the PH system will be integrated [0, ivp_period]
-        ivp_max_step : float
-            Maximum step size the IVP solver is allowed to take.
-            If this is not specified, the solver automatically chooses the step size.
-        ivp_method : str
-            Parameter to scipy's IVP solver, specifying the method to be used.
-            Can be 'RK45', 'RK23', 'DOP853', 'Radau', 'BDF' (default), 'LSODA'
+        ivp_step_size : float
+            Step size the integrator shall take
         """
 
         # Optimizer hyperpameters
-        self.alpha = alpha
-        self.beta = beta
-        self.gamma = gamma
-        self.resistive = resistive
+        self.alpha     = tf.constant(alpha / 2.0, dtype='float64')
+        self.beta      = beta
+        self.gamma     = tf.constant(gamma, dtype='float64')
+        self.resistive = tf.constant(resistive, dtype='float64')
 
         # Configuration of the IVP solver
-        self.ivp_period   = ivp_period
-        self.ivp_method   = ivp_method
-        self.ivp_max_step = ivp_max_step
-        self.ivp_t_span   = (0.0, self.ivp_period)
+        self.ivp_period    = ivp_period
+        self.ivp_step_size = ivp_step_size
 
         # Initialize internal parameters
         self._last_model = None
-        self._momenta = None
         self._param_count = None
-        self._dynamics_matrix = None
-
-        # TODO: TEMPORARY
-        self.hamiltonian = None
 
     def _check_model_and_state(self, model: keras.models.Model):
-        """Hook to be called on training, this checks whether the model being trained was changed"""
+        """
+            Internal hook to be called on training, this checks whether the model being trained was changed
+
+            This (re)creates the matrices B, B⁻¹, M, M⁻¹ and also a function returning the inverse of [𝕀 + ½·Δt·M⁻¹·B]⁻¹
+            (See verlet_integrator for details)
+        """
 
         if model != self._last_model:
             # Set new model
@@ -103,11 +103,22 @@ class PortHamiltonianOptimizer:
             param_count = _model_param_count(model)
 
             self._param_count = param_count
-            self._momenta = tf.zeros([param_count], dtype='float64')
 
-            B = self.resistive * sparse.eye(param_count)
-            self._dynamics_matrix = PortHamiltonianOptimizer._calculate_dynamics_matrix(B)
-            del B
+            self.B     =     self.resistive * tf.sparse.eye(param_count, dtype='float64')
+            self.B_inv = 1 / self.resistive * tf.sparse.eye(param_count, dtype='float64')
+
+            self.M     =     self.gamma * tf.sparse.eye(param_count, dtype='float64')
+            self.M_inv = 1 / self.gamma * tf.sparse.eye(param_count, dtype='float64')
+
+            # This function calculates [𝕀 + ½·Δt·M⁻¹·B]⁻¹
+            self.ITMB_inv = lambda Δt: \
+                tf.constant(1 / (1 + Δt * self.resistive / (2 * self.gamma))) * tf.sparse.eye(param_count, dtype='float64')
+
+            # The gradient depends on the current batch, which we don't know at this time.
+            # It is set correctly in the train_batch() function.
+            stub_loss_gradient = lambda _: tf.zeros((param_count, 1), dtype='float64')
+
+            self._integrator = VerletIntegrator(stub_loss_gradient, self.M, self.M_inv, self.B, self.B_inv, self.ITMB_inv)
 
     # Training related functionality
     def train(
@@ -119,20 +130,19 @@ class PortHamiltonianOptimizer:
             batch_size: int = 64,
             shuffle: bool = True,
             callbacks = None,
-            metrics = [],
-            hamiltonian_generator = None
+            metrics: List[tf.metrics.Metric] = [],
         ) -> None:
         """
         Train the model on the given data
-        
+
         Parameters
         ----------
         model : keras.models.Model
             The tf.keras Model to train
-        input_data : 
-        
-        target_data :
-        
+        input_data : tf.Tensor
+            Tensor of input samples to train the model on
+        target_data : tf.Tensor
+            Tensor of expected outputs corresponding to the inputs given in input_data
         epochs : int
             The number of epochs (iterations over the complete training dataset) to use for
             the training of the model given.
@@ -141,13 +151,15 @@ class PortHamiltonianOptimizer:
             Use 1 for the '' method of training and the size of the training dataset for the '' method
             described in the paper.
         shuffle : bool
-        
+            Whether samples shall be shuffled before batching in different epochs.
+            This is supposed to increase accuracy when training over multiple epochs, since the batches
+            used for training are (probably) different in every epoch, which prevents a reduction of the
+            training's effectiveness (compare 'Deep Learning' p. 280)
         callbacks : List of tf.keras.callbacks.Callback objects
-            Callbacks to be called during the training process 
-        metrics : 
-        
-        hamiltonian_generator : 
-            
+            Callbacks to be called during the training process
+        metrics : List[tf.metrics.Metric]
+            Metrics to calculate during training and report
+            These are reported to callbacks and thus also shown in a progress bar
         """
 
         # Determine the number of samples within the training dataset
@@ -168,7 +180,7 @@ class PortHamiltonianOptimizer:
                 # And, since the tensorflow progbar is a bit broken … with conversion
                 steps=tf.constant(int(sample_cnt / batch_size), dtype='float64')
             )
-        
+
         # Begin training
         callbacks.on_train_begin()
 
@@ -180,22 +192,37 @@ class PortHamiltonianOptimizer:
 
             for index, batch in train_dataset.enumerate():
                 callbacks.on_train_batch_begin(index, {'batch': index, 'size': batch_size})
-                loss, energy = self.train_batch(model, *batch, metrics, hamiltonian_generator)
+                loss, energy = self.train_batch(model, *batch, metrics)
 
                 # Call callbacks (also updates progress bar)
                 logs = dict([('loss', loss), ('energy', energy)] + [(m.name, m.result()) for m in metrics])
                 callbacks.on_train_batch_end(tf.cast(index, dtype='float64'), logs) # Another cast to work around tf quirks
-            
+
             callbacks.on_epoch_end(epoch, logs)
-        
+
         callbacks.on_train_end()
 
     def train_batch(
-            self, model: keras.models.Model, input_batch, target_batch,
-            metrics=[], hamiltonian_generator=None
+            self, model: keras.models.Model,
+            input_batch: tf.Tensor, target_batch: tf.Tensor,
+            metrics=[]
         ) -> float:
-        """Train the model with a single batch of samples
-        
+        """
+            Train the model with a single batch of samples
+
+            Parameters
+            ----------
+            model : tf.keras.Model
+                The model to train
+            input_batch : tf.Tensor
+                Input samples of the batch to train.
+                These contain the inputs of the batch
+            target_batch : tf.Tensor
+                Output samples of the batch to train.
+                These contain the expected output of the model for the inputs.
+            metrics : List[tf.metrics.Metric]
+                List of tensorflow metrics.
+                These will be evaluated after the training.
         """
 
         # Basic sanity check that input sample count matches target sample
@@ -203,27 +230,32 @@ class PortHamiltonianOptimizer:
         sample_cnt = input_batch.shape[0]
         assert sample_cnt == target_batch.shape[0]
 
+        # Call the model handler (no-op if the model didn't change since the last iteration)
         self._check_model_and_state(model)
-        p = self._param_count        
+
+        # Redefine hamiltonian and gradient for the current batch
+        batch_hamiltonian = self.get_hamiltonian(model, input_batch, target_batch)
+
+        @tf.function
+        def loss_gradient(params: tf.Tensor) -> tf.Tensor:
+            _model_set_flat_variables(model, params)
+
+            with tf.GradientTape() as tape:
+                tape.watch(input_batch)
+
+                loss = model.loss(target_batch, model(input_batch)) + self.beta  * tf.tensordot(params, params, 2)
+
+            return _flatten_variables(
+                tape.gradient(loss, model.trainable_variables)
+            )
+        self._integrator.loss_gradient = loss_gradient
 
         params = _flatten_variables(model.trainable_variables)
-        state = tf.concat([params, self._momenta], 0)
 
-        dynamics, hamiltonian = self.get_dynamics(model, input_batch, target_batch, hamiltonian_generator)
-
-        # Solve the IVP problem using SciPy's IVP solver.
-        solution = solve_ivp(dynamics, self.ivp_t_span, state, method=self.ivp_method)
-        # TODO: Check solution
-
-        # The new state resulting from the evolution of the IVP
-        new_state = solution.y[:, -1]
-
-        # Split the network parameters and evolution momenta from the new state
-        params = new_state[:p]
-        momenta = new_state[p:]
+        params, velocity = self._integrator.integrate(self.ivp_period, self.ivp_step_size, params)
+        momenta = tf.sparse.sparse_dense_matmul(self.M, velocity)
 
         _model_set_flat_variables(model, params)
-        self._momenta = momenta
 
         # Predict output for the current batch and update the metrics accordingly
         prediction = model(input_batch)
@@ -231,183 +263,52 @@ class PortHamiltonianOptimizer:
             metric.update_state(target_batch, prediction)
 
         # We return the loss for the current batch and the energy in the system for the current batch
-        return model.loss(target_batch, prediction), hamiltonian(params, momenta)
-
-    def get_dynamics(
-            self, model: keras.models.Model, inputs, targets, hamiltonian_generator=None
-        ):
-        """
-        This function returns a tf.function that defines the dynamics of a PH system.
-        
-        These are defined as ẋ=(J-R)·∇H(x)=F·∇H(x), where F the dynamics matrix calculated when a new model is loaded.
-        
-        Parameters
-        ----------
-        model : keras.models.Model
-            The model to train, required for its gradient function wrt. to the parameters
-        inputs : 
-        
-        targets :
-        
-        hamiltonian_generator : 
-            
-        """
-
-        self._check_model_and_state(model)
-
-        p = self._param_count
-        F = self._dynamics_matrix
-
-        if not self.hamiltonian:
-            self.hamiltonian = (hamiltonian_generator or self.get_hamiltonian)(model, inputs, targets)
-        hamiltonian = self.hamiltonian
-
-        # As long as no custom hamiltonian function is given, the first
-        # dynamics function is used, which has some features of the
-        # gradient calculated by hand, which results in a speed
-        # improvement of about 390 % in tests.
-        # In case a custom hamiltonan function is used, the gradient
-        # must be determined by the gradient tape as well, which is
-        # slower.
-        if hamiltonian_generator is None:
-            # This is the function which describes the parameter dynamics and
-            # will be used for integration
-            def dynamics(t, state):
-                state = tf.convert_to_tensor(state)
-
-                params = state[:p]
-                momenta = state[p:]
-
-                _model_set_flat_variables(model, params)
-
-                with tf.GradientTape() as tape:
-                    tape.watch(state)
-
-                    loss = model.loss(targets, model(inputs))
-
-                loss_gradient = _flatten_variables(
-                    tape.gradient(loss, model.trainable_variables)
-                )
-
-                # The hamiltonian is H(x) = H(ϑ,ω) = ½·( α·loss(ϑ) + β·∥ϑ∥² + γ·∥ω∥² ) = ½·( α·loss(ϑ) + β·ϑᵀ·ϑ + γ·ωᵀ·ω )
-                #   Thus, ∇_ϑ H = ½·α·∇_ϑ loss(ϑ) + β·ϑ
-                #   Also, ∇_ω H = γ·ω
-                # We thus obtain the following derivatives:
-                nabla_theta = 0.5 * self.alpha * loss_gradient + self.beta * params
-                nabla_omega = self.gamma * momenta
-
-                # The gradient is just the concatenation ∇H = (∇_ϑ H, ∇_ω H)
-                gradient = tf.concat([nabla_theta, nabla_omega], 0)
-
-                out = F * gradient.numpy()
-
-                return out
-
-        else:
-            # This is the function which describes the parameter dynamics and
-            # will be used for integration
-            def dynamics(t, state):
-                state = tf.convert_to_tensor(state)
-
-                params = state[:p]
-                momenta = state[p:]
-
-                _model_set_flat_variables(model, params)
-
-                # Determine the gradient of the hamiltonian
-                with tf.GradientTape(persistent=True) as tape:
-                    tape.watch(momenta)
-
-                    system_energy = hamiltonian(params, momenta)
-
-                grad_theta = tape.gradient(system_energy, model.trainable_variables)
-                grad_omega = tape.gradient(system_energy, momenta)
-
-                del tape
-
-                grad_theta = _flatten_variables(grad_theta)
-                gradient = tf.concat([grad_theta, grad_omega], 0)
-
-                out = F * gradient.numpy()
-
-                return out
-
-        return dynamics, hamiltonian
+        return model.loss(target_batch, prediction), batch_hamiltonian(params, momenta)
 
     def get_hamiltonian(
             self, model: keras.models.Model, inputs: tf.Tensor, targets: tf.Tensor
-        ):
+        ) -> Callable[[tf.Tensor], float]:
         """
             Generate a Tensorflow instrumented function that represents the systems Hamiltonian.
         """
         p = _model_param_count(model)
 
-        @tf.function
-        def hamiltonian(params: tf.Tensor, momenta: tf.Tensor) -> float:
-            """Calculate the value of the Hamiltonian of the system.
+        return lambda params, momenta: self._hamiltonian(model, inputs, targets, params, momenta)
 
-            The parameter state should be a tf.Tensor (x in the thesis, Xi in the original paper).
+    @tf.function
+    def _hamiltonian(
+            self, model: keras.models.Model,
+            inputs: tf.Tensor, targets: tf.Tensor,
+            params: tf.Tensor, momenta: tf.Tensor
+        ) -> float:
+        """Calculate the value of the Hamiltonian of the system.
 
-            It takes two arguments, params and momenta, instead of the single state argument,
-            since it is possible to faster calculate the partial derivative with regard to the momenta.
-            """
+        The parameter state should be a tf.Tensor (x in the thesis, ξ in the original paper).
 
-            # Assign state parameters to model
-            _model_set_flat_variables(model, params)
-
-            # Predict the outcome with the new parameters
-            prediction = model(inputs)
-
-            return 0.5 * (
-                  self.alpha * model.loss(targets, prediction)
-                + self.beta  * tf.tensordot(params, params, 1)
-                + self.gamma * tf.tensordot(momenta, momenta, 1)
-            )
-
-        return hamiltonian
-
-    @staticmethod
-    def _calculate_dynamics_matrix(B: np.ndarray) -> np.ndarray:
-        """
-        Calculate the dynamics matrix F of the PH systemss
-        
-        This function calculates the matrix called F = J - R in the
-        paper, where J = [[0, 1],[-1, 0]] and R = [[0, 0],[0, B]]
-        (0 and 1 are the zero and identity matrix respectively).
-        It is calculated and stored as a sparse tensor in order to save
-        memory.
-
-        The parameter B must be a symmetric and positive definite p x p
-        matrix. Preferably, B is also a sparse matrix.
-
-        The types are annotated with np.ndarray, although they are
-        sparse scipy matrices. However, the matrix and its operations
-        are compatible to numpy's operations, thus the annotation.
+        It takes two arguments, params and momenta, instead of the single state argument,
+        since it is possible to faster calculate the partial derivative with regard to the momenta.
         """
 
-        # Get one side of B and check that B is actually square
-        # We don't check that B is symmetric and positive definite.
-        p = B.shape[0]
-        assert B.shape == (p, p)
+        # Assign state parameters to model
+        _model_set_flat_variables(model, params)
 
-        # Create a p x p identity matrix
-        I = sparse.eye(p)
-        # Build F from its four components
-        F = sparse.bmat([[None, I], [-I, -B]])
-        # Remove the identity matrix from memory, since we don't need it
-        # anymore.
-        del I
+        # Predict the outcome with the new parameters
+        prediction = model(inputs)
 
-        return F
-
+        return 0.5 * (
+              self.alpha * model.loss(targets, prediction)
+            + self.beta  * tf.tensordot(params, params, 2)
+            + self.gamma * tf.tensordot(momenta, momenta, 2)
+        )
 
 ####################################
 # MODEL VARIABLE RELATED FUNCTIONS #
 ####################################
+@tf.function
 def _flatten_variables(variables: List[tf.Variable]) -> tf.Tensor:
     """Given a list of TensorFlow variable tensors, create a one-dimensional tensor from the variables."""
     # This is done by concatenating the variables after reshaping them into a single dimension
-    return tf.concat([tf.reshape(var, [-1]) for var in variables], 0)
+    return tf.concat([tf.reshape(var, [-1, 1]) for var in variables], 0)
 
 
 def _model_param_count(model: keras.models.Model) -> int:

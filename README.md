@@ -11,6 +11,10 @@ The problem here is that with the Keras optimizer interface, the optimizer only 
 However, it does not have access to the batch itself, which we need for the hamiltonian.
 It is also not possible to use the hamiltonian as loss function, since the gradient needs to be evaluated at multiple points (i.e. for multiple parameters) by the IVP solvers.
 
+# Integration
+This algorithm uses a custom written and optimized velocity verlet implementation completely written as tensorflow code.
+Its implementation and derivation is described in [`PHNetworks/verlet_integrator.py`](PHNetworks/verlet_integrator.py).
+
 ## Example
 The following example shows how a model can be trained for the ubiquitous MNIST dataset using this optimizer:
 ```python
