@@ -1,0 +1,126 @@
+COUN: Training 31 networks
+>>> run,layer count,layers,param count,accuracy,time
+DESC: Training model 000_784-10_7850
+TIME: Training took 10.52s
+ACCU: Reached accuracy of 90.70%
+>>> 0,1,784-10,7850,90.70%,10.52s
+DESC: Training model 001_784-50-10_39760
+TIME: Training took 10.84s
+ACCU: Reached accuracy of 89.86%
+>>> 1,2,784-50-10,39760,89.86%,10.84s
+DESC: Training model 002_784-50-50-10_42310
+TIME: Training took 11.38s
+ACCU: Reached accuracy of 79.92%
+>>> 2,3,784-50-50-10,42310,79.92%,11.38s
+DESC: Training model 003_784-250-10_198760
+TIME: Training took 17.12s
+ACCU: Reached accuracy of 90.15%
+>>> 3,2,784-250-10,198760,90.15%,17.12s
+DESC: Training model 004_784-250-50-10_209310
+TIME: Training took 18.09s
+ACCU: Reached accuracy of 85.50%
+>>> 4,3,784-250-50-10,209310,85.50%,18.09s
+DESC: Training model 005_784-250-50-50-10_211860
+TIME: Training took 18.61s
+ACCU: Reached accuracy of 39.59%
+>>> 5,4,784-250-50-50-10,211860,39.59%,18.61s
+DESC: Training model 006_784-500-10_397510
+TIME: Training took 25.00s
+ACCU: Reached accuracy of 90.12%
+>>> 6,2,784-500-10,397510,90.12%,25.00s
+DESC: Training model 007_784-250-250-10_261510
+TIME: Training took 21.45s
+ACCU: Reached accuracy of 88.04%
+>>> 7,3,784-250-250-10,261510,88.04%,21.45s
+DESC: Training model 008_784-500-50-10_418060
+TIME: Training took 26.48s
+ACCU: Reached accuracy of 87.33%
+>>> 8,3,784-500-50-10,418060,87.33%,26.48s
+DESC: Training model 009_784-250-250-50-10_272060
+TIME: Training took 22.47s
+ACCU: Reached accuracy of 39.65%
+>>> 9,4,784-250-250-50-10,272060,39.65%,22.47s
+DESC: Training model 010_784-500-50-50-10_420610
+TIME: Training took 26.82s
+ACCU: Reached accuracy of 53.10%
+>>> 10,4,784-500-50-50-10,420610,53.10%,26.82s
+DESC: Training model 011_784-500-250-10_520260
+TIME: Training took 32.36s
+ACCU: Reached accuracy of 87.63%
+>>> 11,3,784-500-250-10,520260,87.63%,32.36s
+DESC: Training model 012_784-500-250-50-10_530810
+TIME: Training took 33.12s
+ACCU: Reached accuracy of 56.21%
+>>> 12,4,784-500-250-50-10,530810,56.21%,33.12s
+DESC: Training model 013_784-1000-10_795010
+TIME: Training took 41.11s
+ACCU: Reached accuracy of 90.31%
+>>> 13,2,784-1000-10,795010,90.31%,41.11s
+DESC: Training model 014_784-500-500-10_648010
+TIME: Training took 39.48s
+ACCU: Reached accuracy of 88.20%
+>>> 14,3,784-500-500-10,648010,88.20%,39.48s
+DESC: Training model 015_784-500-250-250-10_583010
+TIME: Training took 36.91s
+ACCU: Reached accuracy of 44.65%
+>>> 15,4,784-500-250-250-10,583010,44.65%,36.91s
+DESC: Training model 016_784-1000-50-10_835560
+TIME: Training took 43.33s
+ACCU: Reached accuracy of 86.95%
+>>> 16,3,784-1000-50-10,835560,86.95%,43.33s
+DESC: Training model 017_784-500-500-50-10_668560
+TIME: Training took 41.06s
+ACCU: Reached accuracy of 63.12%
+>>> 17,4,784-500-500-50-10,668560,63.12%,41.06s
+DESC: Training model 018_784-1000-50-50-10_838110
+TIME: Training took 43.50s
+ACCU: Reached accuracy of 50.68%
+>>> 18,4,784-1000-50-50-10,838110,50.68%,43.50s
+DESC: Training model 019_784-1000-250-10_1037760
+TIME: Training took 54.04s
+ACCU: Reached accuracy of 88.65%
+>>> 19,3,784-1000-250-10,1037760,88.65%,54.04s
+DESC: Training model 020_784-500-500-250-10_770760
+TIME: Training took 47.25s
+ACCU: Reached accuracy of 64.59%
+>>> 20,4,784-500-500-250-10,770760,64.59%,47.25s
+DESC: Training model 021_784-1000-250-50-10_1048310
+TIME: Training took 55.03s
+ACCU: Reached accuracy of 54.11%
+>>> 21,4,784-1000-250-50-10,1048310,54.11%,55.03s
+DESC: Training model 022_784-1000-500-10_1290510
+TIME: Training took 69.39s
+ACCU: Reached accuracy of 88.77%
+>>> 22,3,784-1000-500-10,1290510,88.77%,69.39s
+DESC: Training model 023_784-1000-250-250-10_1100510
+TIME: Training took 58.91s
+ACCU: Reached accuracy of 48.86%
+>>> 23,4,784-1000-250-250-10,1100510,48.86%,58.91s
+DESC: Training model 024_784-1000-500-50-10_1311060
+TIME: Training took 73.23s
+ACCU: Reached accuracy of 57.55%
+>>> 24,4,784-1000-500-50-10,1311060,57.55%,73.23s
+DESC: Training model 025_784-1000-500-250-10_1413260
+TIME: Training took 79.70s
+ACCU: Reached accuracy of 66.51%
+>>> 25,4,784-1000-500-250-10,1413260,66.51%,79.70s
+DESC: Training model 026_784-1000-1000-10_1796010
+TIME: Training took 101.69s
+ACCU: Reached accuracy of 88.81%
+>>> 26,3,784-1000-1000-10,1796010,88.81%,101.69s
+DESC: Training model 027_784-1000-500-500-10_1541010
+TIME: Training took 89.45s
+ACCU: Reached accuracy of 68.44%
+>>> 27,4,784-1000-500-500-10,1541010,68.44%,89.45s
+DESC: Training model 028_784-1000-1000-50-10_1836560
+TIME: Training took 102.64s
+ACCU: Reached accuracy of 61.75%
+>>> 28,4,784-1000-1000-50-10,1836560,61.75%,102.64s
+DESC: Training model 029_784-1000-1000-250-10_2038760
+TIME: Training took 112.65s
+ACCU: Reached accuracy of 71.18%
+>>> 29,4,784-1000-1000-250-10,2038760,71.18%,112.65s
+DESC: Training model 030_784-1000-1000-500-10_2291510
+TIME: Training took 131.04s
+ACCU: Reached accuracy of 65.56%
+>>> 30,4,784-1000-1000-500-10,2291510,65.56%,131.04s

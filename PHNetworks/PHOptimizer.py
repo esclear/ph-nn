@@ -257,7 +257,7 @@ class PortHamiltonianOptimizer:
             with tf.GradientTape() as tape:
                 tape.watch(input_batch)
 
-                loss = model.loss(target_batch, model(input_batch)) \
+                loss = model.loss(target_batch, model(input_batch, training=True)) \
                      + self.beta  * tf.tensordot(params, params, 2)
 
             return _flatten_variables(

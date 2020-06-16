@@ -120,7 +120,7 @@ def exec():
         layer_sizes = list(reversed(layer_sizes))
     
     print(f'COUN: Training {len(layer_sizes)} networks')
-    print('>>> run,l_cnt,layers,p_cnt,acc,time')
+    print('>>> run,layer count,layers,param count,accuracy,time')
     
     for id, layer in layer_sizes:
         train_and_evaluate(layer, id)
