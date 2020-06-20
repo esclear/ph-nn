@@ -75,7 +75,7 @@ class PortHamiltonianOptimizer:
         """
 
         # Optimizer hyperpameters
-        self.alpha     = tf.constant(alpha / 2.0, dtype='float64')
+        self.alpha     = tf.constant(alpha, dtype='float64')
         self.beta      = beta
         self.gamma     = tf.constant(gamma, dtype='float64')
         self.resistive = tf.constant(resistive, dtype='float64')
@@ -137,6 +137,7 @@ class PortHamiltonianOptimizer:
             shuffle: bool = True,
             callbacks = None,
             metrics: List[tf.metrics.Metric] = [],
+            verbose: bool = True,
         ) -> None:
         """
         Train the model on the given data
@@ -154,8 +155,8 @@ class PortHamiltonianOptimizer:
             to use for the training of the model given.
         batch_size : int
             Number of items in a batch, 64 by default.
-            Use 1 for the '' method of training and the size of the training dataset
-            for the '' method described in the paper.
+            Use 1 for the 'sequential' method of training and the size of the training
+            dataset for the 'batch' method described in the paper.
         shuffle : bool
             Whether samples shall be shuffled before batching in different epochs.
             This is supposed to increase accuracy when training over multiple epochs,
@@ -167,6 +168,9 @@ class PortHamiltonianOptimizer:
         metrics : List[tf.metrics.Metric]
             Metrics to calculate during training and report
             These are reported to callbacks and thus also shown in a progress bar
+        verbose : bool
+            Parameter to the ProgBar callback.
+            The progressbar will be shown, if `verbose` is `True`.
         """
 
         # Determine the number of samples within the training dataset
@@ -183,7 +187,7 @@ class PortHamiltonianOptimizer:
             callbacks = callbacks_module.CallbackList(
                 callbacks,
                 add_history=True, add_progbar=True, model=model,
-                verbose=True, epochs=epochs,
+                verbose=verbose, epochs=epochs,
                 # And, since the tensorflow progbar is a bit broken … with cast
                 steps=tf.constant(int(sample_cnt / batch_size), dtype='float64')
             )
@@ -257,8 +261,10 @@ class PortHamiltonianOptimizer:
             with tf.GradientTape() as tape:
                 tape.watch(input_batch)
 
-                loss = model.loss(target_batch, model(input_batch, training=True)) \
+                loss = 0.5 * (
+                       self.alpha * model.loss(target_batch, model(input_batch, training=True)) \
                      + self.beta  * tf.tensordot(params, params, 2)
+                )
 
             return _flatten_variables(
                 tape.gradient(loss, model.trainable_variables)
