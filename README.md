@@ -19,6 +19,8 @@ Its implementation and derivation is described in [`PHNetworks/verlet_integrator
 This optimizer has been developed using TensorFlow 2 nightly and some of the examples use TensorBoard 2 nightly using Python 3.8.  
 The latest version under which the optimizer was tested and working can be found in the [requirements.txt](requirements.txt) file and may be installed using `pip -r requirements.txt`.
 
+The latest TensorFlow 2 nightly version known to work with this implementation is `tf-nightly==2.4.0.dev20200703`.
+
 ## Example
 The following example shows how a model can be trained for the ubiquitous MNIST dataset using this optimizer:
 ```python
